@@ -27,14 +27,14 @@ class BokehCamera {
 	void start();
     private:
         rs2::pipeline rs2_pipe;
-        float focal_length;
-	float depth_of_focus;
+        float flength; // focal length
+	float dof;     // depth of focus
 };
 
 BokehCamera::BokehCamera() {
   rs2_pipe.start();
-  focal_length = 600;
-  depth_of_focus = 300;
+  flength = 600.0f;
+  dof = 300.0f;
 }
 
 void BokehCamera::start() {
@@ -51,30 +51,30 @@ void BokehCamera::start() {
     int color_w = color.get_width();
     int color_h = color.get_height();
 
-    cv::Mat depth_cv(cv::Size(depth_w, depth_h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
-    cv::Mat color_cv(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
+    cv::Mat img_depth(cv::Size(depth_w, depth_h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
+    cv::Mat img_color(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
 
-    cv::Mat color_cv_small;
-    cv::Mat color_cv_small_blur_1;
-    cv::Mat color_cv_small_blur_2;
-    cv::Mat color_cv_blur_1;
-    cv::Mat color_cv_blur_2;
+    cv::Mat img_color_small;
+    cv::Mat img_color_small_blur_1;
+    cv::Mat img_color_small_blur_2;
+    cv::Mat img_color_blur_1;
+    cv::Mat img_color_blur_2;
 
-    cv::resize(color_cv, color_cv_small, cv::Size(640, 360), 0, 0, cv::INTER_NEAREST);
-    cv::blur(color_cv_small, color_cv_small_blur_2, cv::Size(10, 10));
-    cv::blur(color_cv_small, color_cv_small_blur_1, cv::Size(5, 5));
-    cv::resize(color_cv_small_blur_1, color_cv_blur_1, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
-    cv::resize(color_cv_small_blur_2, color_cv_blur_2, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
+    cv::resize(img_color, img_color_small, cv::Size(640, 360), 0, 0, cv::INTER_NEAREST);
+    cv::blur(img_color_small, img_color_small_blur_2, cv::Size(10, 10));
+    cv::blur(img_color_small, img_color_small_blur_1, cv::Size(5, 5));
+    cv::resize(img_color_small_blur_1, img_color_blur_1, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
+    cv::resize(img_color_small_blur_2, img_color_blur_2, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
 
-    auto b = (depth_cv - focal_length) / depth_of_focus;
-    cv::Mat cx = 1.0 / (1.0 + b.mul(b));
-    cx = cv::max(cv::min(cx, 1.0), 0.0);
+    auto b = (img_depth - flength) / dof;
+    cv::Mat cx = 1.0f / (1.0f + b.mul(b));
+    cx = cv::max(cv::min(cx, 1.0f), 0.0f);
 
-    auto c0 = (cx > 0.5).mul((cx - 0.5) * 2, CV_32F);
-    auto c1 = (cx > 0.5).mul((1 - c0), CV_32F) + (cx <= 0.5).mul(cx * 2, CV_32F);
-    auto c2 = (cx <= 0.5).mul((1 - c1), CV_32F);
+    auto c0 = (cx > 0.5f).mul((cx - 0.5f) * 2.0f);
+    auto c1 = (cx > 0.5f).mul((1.0f - c0)) + (cx <= 0.5f).mul(cx * 2.0f);
+    auto c2 = (cx <= 0.5f).mul((1.0f - c1));
 
-    // cv::Mat output_image = c0 * color_cv;
+    // cv::Mat output_image = c0 * img_color;
 
     // cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
     // cv::imshow("Display Image", output_image);
