@@ -14,6 +14,20 @@ sudo modprobe v4l2loopback devices=1 video_nr=20 exclusive_caps=1
 
 2. Run ./BokehCamera
 
+# Controls
+
+While it is running:
+
+Press 1 to send bokeh-fied image
+
+Press 2 to send a map of the computed amount of blur (white = don't blur, black = full blur)
+
+Press 3 to send the depth map
+
+Press 4 to send no-bokeh RGB
+
+Press \[ or \] to refocus the image
+
 ![image](/images/screenshot0.jpg "image")
 
 ![image](/images/screenshot1.jpg "image")
