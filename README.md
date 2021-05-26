@@ -1,6 +1,6 @@
 # bokeh-camera
 
-If you think the Google/Zoom segmentation-based background blur effects look kind of fake, this attempts to simulate a more realistic-looking bokeh using a RealSense D455 camera.
+If you think the Google/Zoom segmentation-based background blur effects look kind of fake, this attempts to simulate a more realistic-looking bokeh using a RealSense D455 camera on a virtual camera device that you can use from any conferencing software.
 
 Work in progress, code not yet cleaned up, but roughly:
 
@@ -13,6 +13,8 @@ sudo modprobe v4l2loopback devices=1 video_nr=20 exclusive_caps=1
 ```
 
 2. Run ./BokehCamera
+
+3. Select the virtual camera on Google Meet or Zoom or whatever you use
 
 # Controls
 
