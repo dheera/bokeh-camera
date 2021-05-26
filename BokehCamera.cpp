@@ -3,26 +3,13 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
-
 #include <librealsense2/rs.hpp>
-
-#define VID_WIDTH  1280
-#define VID_HEIGHT 720
-
 #include <iostream>
 
 #define OUTPUT_MODE_BOKEH 0
 #define OUTPUT_MODE_CX 1
 #define OUTPUT_MODE_DEPTH 2
 #define OUTPUT_MODE_RGB 3
-
-void clamp(cv::Mat& mat, cv::Point2f lowerBound, cv::Point2f upperBound) {
-    std::vector<cv::Mat> matc;
-    cv::split(mat, matc);
-    cv::min(cv::max(matc[0], lowerBound.x), upperBound.x, matc[0]);
-    cv::min(cv::max(matc[1], lowerBound.y), upperBound.y, matc[1]);
-    cv::merge(matc, mat);   
-}
 
 std::string type2str(int type) {
   std::string r;
@@ -60,13 +47,17 @@ class BokehCamera {
 	std::vector<cv::Mat> img_out_buffer;
 	int vid_out;
 	size_t framesize;
-	int output_mode;
+	uint8_t output_mode;
+	size_t vid_width;
+	size_t vid_height;
 };
 
 BokehCamera::BokehCamera() {
+    vid_width = 1280;
+    vid_height = 720;
     rs2::config cfg;
-    cfg.enable_stream(RS2_STREAM_DEPTH, 1280, 720, RS2_FORMAT_Z16, 30);
-    cfg.enable_stream(RS2_STREAM_COLOR, 1280, 720, RS2_FORMAT_RGB8, 30);
+    cfg.enable_stream(RS2_STREAM_DEPTH, vid_width, vid_height, RS2_FORMAT_Z16, 30);
+    cfg.enable_stream(RS2_STREAM_COLOR, vid_width, vid_height, RS2_FORMAT_RGB8, 30);
     rs2_pipe.start(cfg);
     flength = 600.0f;
     dof = 300.0f;
@@ -90,9 +81,9 @@ BokehCamera::BokehCamera() {
     }   
 
     // configure desired video format on device
-    framesize = 1280 * 720 * 3;
-    vid_format.fmt.pix.width = 1280;
-    vid_format.fmt.pix.height = 720;
+    framesize = vid_width * vid_height * 3;
+    vid_format.fmt.pix.width = vid_width;
+    vid_format.fmt.pix.height = vid_height;
     vid_format.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
     vid_format.fmt.pix.sizeimage = framesize;
     vid_format.fmt.pix.field = V4L2_FIELD_NONE;
