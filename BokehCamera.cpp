@@ -14,6 +14,7 @@
 #define OUTPUT_MODE_BOKEH 0
 #define OUTPUT_MODE_CX 1
 #define OUTPUT_MODE_DEPTH 2
+#define OUTPUT_MODE_RGB 3
 
 void clamp(cv::Mat& mat, cv::Point2f lowerBound, cv::Point2f upperBound) {
     std::vector<cv::Mat> matc;
@@ -68,7 +69,7 @@ BokehCamera::BokehCamera() {
     cfg.enable_stream(RS2_STREAM_COLOR, 1280, 720, RS2_FORMAT_RGB8, 30);
     rs2_pipe.start(cfg);
     flength = 600.0f;
-    dof = 150.0f;
+    dof = 300.0f;
     output_device = "/dev/video20";
     output_mode = OUTPUT_MODE_BOKEH;
 
@@ -174,7 +175,7 @@ void BokehCamera::start() {
     cv::Mat1f b = cv::abs(img_depth - flength);
     b /= dof;
 
-    cv::Mat1f cx = 1.0f / (1.0f + b);
+    cv::Mat1f cx = 1.0f / (1.0f + b.mul(b));
     cx = cv::max(cv::min(cx, 1.0f), 0.0f);
 
     cv::blur(cx, cx, cv::Size(10, 10));
@@ -276,6 +277,16 @@ void BokehCamera::start() {
 	    }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", output);
+    } else if(output_mode == OUTPUT_MODE_RGB) {
+	    size_t written = write(vid_out, img_color.data, framesize);
+	    std::cout << "bytes written: " << written << std::endl;
+	    if (written < 0) {
+	        std::cerr << "ERROR: could not write to output device!\n";
+	        close(vid_out);
+	        break;
+	    }
+        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Display Image", img_color);
     }
 
     auto key = cv::waitKey(1);
@@ -283,6 +294,7 @@ void BokehCamera::start() {
     else if (key == 49) { output_mode = OUTPUT_MODE_BOKEH; }
     else if (key == 50) { output_mode = OUTPUT_MODE_CX; }
     else if (key == 51) { output_mode = OUTPUT_MODE_DEPTH; }
+    else if (key == 52) { output_mode = OUTPUT_MODE_RGB; }
     else if (key == 91) { flength += 40; std::cout << "flength = " << flength << std::endl; }
     else if (key == 93) { flength -= 40; std::cout << "flength = " << flength << std::endl; }
     else { std::cout << "key press: " << key << std::endl; }
