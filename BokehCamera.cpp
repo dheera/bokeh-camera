@@ -160,6 +160,8 @@ void BokehCamera::start() {
     cv::Mat1f cx = 1.0f / (1.0f + b.mul(b));
     cx = cv::max(cv::min(cx, 1.0f), 0.0f);
 
+    cv::blur(cx, cx, cv::Size(10, 10));
+
     CV_Assert(cx.depth() == CV_32F);
 
     auto t1 = high_resolution_clock::now();
