@@ -184,10 +184,10 @@ void BokehCamera::start() {
 
     float q0, q1, q2;
     float* it;
-    cv::Vec3b* iti0;
-    cv::Vec3b* iti1;
-    cv::Vec3b* iti2;
-    cv::Vec3b* ito;
+    uchar* iti0;
+    uchar* iti1;
+    uchar* iti2;
+    uchar* ito;
 
     assert(cx.isContinuous());
     assert(output.isContinuous());
@@ -196,25 +196,26 @@ void BokehCamera::start() {
     assert(img_color_blur_2.isContinuous());
 
     it = cx.ptr<float>(0);
-    iti0 = img_color.ptr<cv::Vec3b>(0);
-    iti1 = img_color_blur_1.ptr<cv::Vec3b>(0);
-    iti2 = img_color_blur_2.ptr<cv::Vec3b>(0);
-    ito = output.ptr<cv::Vec3b>(0);
-    int idx = 0;
+    iti0 = img_color.ptr<uchar>(0);
+    iti1 = img_color_blur_1.ptr<uchar>(0);
+    iti2 = img_color_blur_2.ptr<uchar>(0);
+    ito = output.ptr<uchar>(0);
+    int idx = 0, idx3 = 0;
 
     for(idx = 0; idx < cx.rows*cx.cols; idx++) {
+	idx3 = idx*3;
 	if(it[idx] > 0.5f) {
   	  q0 = (it[idx] - 0.5f) * 2.0f;
 	  q1 = (1.0f - q0);
-	  ito[idx][0] = q0 * iti0[idx][0] + q1 * iti1[idx][0];
-  	  ito[idx][1] = q0 * iti0[idx][1] + q1 * iti1[idx][1];
-	  ito[idx][2] = q0 * iti0[idx][2] + q1 * iti1[idx][2];
+	  ito[idx3+0] = q0 * iti0[idx3+0] + q1 * iti1[idx3+0];
+  	  ito[idx3+1] = q0 * iti0[idx3+1] + q1 * iti1[idx3+1];
+	  ito[idx3+2] = q0 * iti0[idx3+2] + q1 * iti1[idx3+2];
 	} else {
 	  q1 = (it[idx] * 2.0f);
  	  q2 = (1.0f - q1);
-	  ito[idx][0] = q1 * iti1[idx][0] + q2 * iti2[idx][0];
-  	  ito[idx][1] = q1 * iti1[idx][1] + q2 * iti2[idx][1];
-	  ito[idx][2] = q1 * iti1[idx][2] + q2 * iti2[idx][2];
+	  ito[idx3+0] = q1 * iti1[idx3+0] + q2 * iti2[idx3+0];
+  	  ito[idx3+1] = q1 * iti1[idx3+1] + q2 * iti2[idx3+1];
+	  ito[idx3+2] = q1 * iti1[idx3+2] + q2 * iti2[idx3+2];
 	}
     }
    
