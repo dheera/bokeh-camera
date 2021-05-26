@@ -4,6 +4,8 @@ If you think the Google/Zoom segmentation-based background blur effects look kin
 
 Work in progress, code not yet cleaned up, but roughly:
 
+-1. Requirements: librealsense2-dev, libopencv-dev
+
 0. Run ./build-this
 
 1. Set up a v4l2 loopback device at /dev/video20
