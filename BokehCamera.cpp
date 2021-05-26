@@ -128,15 +128,18 @@ void BokehCamera::start() {
 
   hole_filter.set_option(RS2_OPTION_HOLES_FILL,1);
 
+  rs2::frameset data;
     cv::Mat img_color_small;
     cv::Mat img_color_small_blur_1;
     cv::Mat img_color_small_blur_2;
     cv::Mat img_color_blur_1;
     cv::Mat img_color_blur_2;
+    cv::Mat1f cx;
+    cv::Mat1f b;
 
   for(;;) {
     // fetch synchronized depth and color frames from RealSense
-    rs2::frameset data = rs2_pipe.wait_for_frames();
+    data = rs2_pipe.wait_for_frames();
     data = align_to_color.process(data);
 
     rs2::depth_frame depth = data.get_depth_frame();
@@ -172,10 +175,10 @@ void BokehCamera::start() {
 
     // compute amount of blur at each pixel
     // TODO 5ms !!
-    cv::Mat1f b = cv::abs(img_depth - flength);
+    b = cv::abs(img_depth - flength);
     b /= dof;
 
-    cv::Mat1f cx = 1.0f / (1.0f + b.mul(b));
+    cx = 1.0f / (1.0f + b.mul(b));
     cx = cv::max(cv::min(cx, 1.0f), 0.0f);
 
     cv::blur(cx, cx, cv::Size(10, 10));
@@ -195,24 +198,32 @@ void BokehCamera::start() {
     cv::Vec3b* iti2;
     cv::Vec3b* ito;
 
-    // for(it = cx.begin(), end = cx.end(); it != end; ++it) {
-    for(int r = 0; r < cx.rows; r++) {
-	it = cx.ptr<float>(r);
-	iti0 = img_color.ptr<cv::Vec3b>(r);
-	iti1 = img_color_blur_1.ptr<cv::Vec3b>(r);
-	iti2 = img_color_blur_2.ptr<cv::Vec3b>(r);
-	ito = output.ptr<cv::Vec3b>(r);
+    assert(cx.isContinuous());
+    assert(output.isContinuous());
+    assert(img_color.isContinuous());
+    assert(img_color_blur_1.isContinuous());
+    assert(img_color_blur_2.isContinuous());
 
-        for(int c = 0; c < cx.cols; c++) {
+    it = cx.ptr<float>(0);
+    iti0 = img_color.ptr<cv::Vec3b>(0);
+    iti1 = img_color_blur_1.ptr<cv::Vec3b>(0);
+    iti2 = img_color_blur_2.ptr<cv::Vec3b>(0);
+    ito = output.ptr<cv::Vec3b>(0);
+    int idx = 0;
 
-	q0 = (it[c] > 0.5f) ? (it[c] - 0.5f) * 2.0f : 0.0f;
-	q1 = ((it[c] > 0.5f) ? (1.0f - q0) : 0.0f ) + ((it[c] <= 0.5f) ? (it[c] * 2.0f) : 0.0f);
-	q2 = (it[c] <= 0.5f) ? (1.0f - q1) : 0.0f;
-
-	ito[c][0] = q0 * iti0[c][0] + q1 * iti1[c][0] + q2 * iti2[c][0];
-	ito[c][1] = q0 * iti0[c][1] + q1 * iti1[c][1] + q2 * iti2[c][1];
-	ito[c][2] = q0 * iti0[c][2] + q1 * iti1[c][2] + q2 * iti2[c][2];
-
+    for(idx = 0; idx < cx.rows*cx.cols; idx++) {
+	if(it[idx] > 0.5f) {
+  	  q0 = (it[idx] - 0.5f) * 2.0f;
+	  q1 = (1.0f - q0);
+	  ito[idx][0] = q0 * iti0[idx][0] + q1 * iti1[idx][0];
+  	  ito[idx][1] = q0 * iti0[idx][1] + q1 * iti1[idx][1];
+	  ito[idx][2] = q0 * iti0[idx][2] + q1 * iti1[idx][2];
+	} else {
+	  q1 = (it[idx] * 2.0f);
+ 	  q2 = (1.0f - q1);
+	  ito[idx][0] = q1 * iti1[idx][0] + q2 * iti2[idx][0];
+  	  ito[idx][1] = q1 * iti1[idx][1] + q2 * iti2[idx][1];
+	  ito[idx][2] = q1 * iti1[idx][2] + q2 * iti2[idx][2];
 	}
     }
    
@@ -220,8 +231,7 @@ void BokehCamera::start() {
     auto ms_int = duration_cast<milliseconds>(t2 - t1);
     /* Getting number of milliseconds as a double. */
     duration<double, std::milli> ms_double = t2 - t1;
-    std::cout << ms_int.count() << "ms\n";
-    std::cout << ms_double.count() << "ms";
+    std::cout << ms_double.count() << "ms" << std::endl;
 
 
     if(output_mode == OUTPUT_MODE_BOKEH) {
