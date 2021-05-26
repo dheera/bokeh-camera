@@ -11,6 +11,10 @@
 
 #include <iostream>
 
+#define OUTPUT_MODE_BOKEH 0
+#define OUTPUT_MODE_CX 1
+#define OUTPUT_MODE_DEPTH 2
+
 void clamp(cv::Mat& mat, cv::Point2f lowerBound, cv::Point2f upperBound) {
     std::vector<cv::Mat> matc;
     cv::split(mat, matc);
@@ -55,6 +59,7 @@ class BokehCamera {
 	std::vector<cv::Mat> img_out_buffer;
 	int vid_out;
 	size_t framesize;
+	int output_mode;
 };
 
 BokehCamera::BokehCamera() {
@@ -65,6 +70,7 @@ BokehCamera::BokehCamera() {
     flength = 600.0f;
     dof = 300.0f;
     output_device = "/dev/video20";
+    output_mode = OUTPUT_MODE_BOKEH;
 
     vid_out = open(output_device.c_str(), O_RDWR);
     if(vid_out < 0) {
@@ -113,6 +119,12 @@ void BokehCamera::start() {
 
   rs2::align align_to_color(RS2_STREAM_COLOR);
   rs2::hole_filling_filter hole_filter;
+  rs2::spatial_filter spatial_filter;
+  rs2::temporal_filter temporal_filter;
+
+  rs2::disparity_transform depth_to_disparity(true);
+  rs2::disparity_transform disparity_to_depth(false);
+
   hole_filter.set_option(RS2_OPTION_HOLES_FILL,1);
 
     cv::Mat img_color_small;
@@ -129,10 +141,14 @@ void BokehCamera::start() {
     rs2::depth_frame depth = data.get_depth_frame();
     rs2::video_frame color = data.get_color_frame();
 
+    //depth = depth_to_disparity.process(depth);
+    depth = spatial_filter.process(depth);
+    depth = temporal_filter.process(depth);
+    //depth = disparity_to_depth.process(depth);
     depth = hole_filter.process(depth);
 
-    std::cout << "received depth frame: " << depth.get_width() << "x" << depth.get_height() << std::endl;
-    std::cout << "received color frame: " << color.get_width() << "x" << color.get_height() << std::endl;
+    //std::cout << "received depth frame: " << depth.get_width() << "x" << depth.get_height() << std::endl;
+    //std::cout << "received color frame: " << color.get_width() << "x" << color.get_height() << std::endl;
 
     int depth_w = depth.get_width();
     int depth_h = depth.get_height();
@@ -155,8 +171,9 @@ void BokehCamera::start() {
 
     // compute amount of blur at each pixel
     // TODO 5ms !!
-    cv::Mat1f b = (img_depth - flength);
+    cv::Mat1f b = cv::abs(img_depth - flength);
     b /= dof;
+
     cv::Mat1f cx = 1.0f / (1.0f + b.mul(b));
     cx = cv::max(cv::min(cx, 1.0f), 0.0f);
 
@@ -189,7 +206,7 @@ void BokehCamera::start() {
 
 	q0 = (it[c] > 0.5f) ? (it[c] - 0.5f) * 2.0f : 0.0f;
 	q1 = ((it[c] > 0.5f) ? (1.0f - q0) : 0.0f ) + ((it[c] <= 0.5f) ? (it[c] * 2.0f) : 0.0f);
-	q2 = (it[c] < 0.5f) ? (1.0f - q1) : 0.0f;
+	q2 = (it[c] <= 0.5f) ? (1.0f - q1) : 0.0f;
 
 	ito[c][0] = q0 * iti0[c][0] + q1 * iti1[c][0] + q2 * iti2[c][0];
 	ito[c][1] = q0 * iti0[c][1] + q1 * iti1[c][1] + q2 * iti2[c][1];
@@ -205,19 +222,68 @@ void BokehCamera::start() {
     std::cout << ms_int.count() << "ms\n";
     std::cout << ms_double.count() << "ms";
 
-    cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
-    cv::imshow("Display Image", output);
 
-    size_t written = write(vid_out, output.data, framesize);
-    std::cout << written << std::endl;
-    if (written < 0) {
-        std::cerr << "ERROR: could not write to output device!\n";
-        close(vid_out);
-        break;
+    if(output_mode == OUTPUT_MODE_BOKEH) {
+	    std::cout << "BOKEH" << std::endl;
+	    size_t written = write(vid_out, output.data, framesize);
+	    std::cout << "bytes written: " << written << std::endl;
+	    if (written < 0) {
+	        std::cerr << "ERROR: could not write to output device!\n";
+	        close(vid_out);
+	        break;
+	    }
+        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Display Image", output);
+    } else if(output_mode == OUTPUT_MODE_CX) {
+        std::cout << "CX" << std::endl;
+	cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
+        for(int r = 0; r < cx.rows; r++) {
+	  float* it = cx.ptr<float>(r);
+	  cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
+          for(int c = 0; c < cx.cols; c++) {
+            ito[c][0] = it[c]*255;
+            ito[c][1] = it[c]*255;
+            ito[c][2] = it[c]*255;
+	  }
+	}
+	    size_t written = write(vid_out, output.data, framesize);
+	    std::cout << "bytes written: " << written << std::endl;
+	    if (written < 0) {
+	        std::cerr << "ERROR: could not write to output device!\n";
+	        close(vid_out);
+	        break;
+	    }
+        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Display Image", output);
+    } else if(output_mode == OUTPUT_MODE_DEPTH) {
+        std::cout << "DEPTH" << std::endl;
+	cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
+        for(int r = 0; r < img_depth.rows; r++) {
+	  uint16_t* it = img_depth.ptr<uint16_t>(r);
+	  cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
+          for(int c = 0; c < img_depth.cols; c++) {
+            ito[c][0] = it[c] >> 4;
+            ito[c][1] = it[c] >> 4;
+            ito[c][2] = it[c] >> 4;
+	  }
+	}
+	    size_t written = write(vid_out, output.data, framesize);
+	    std::cout << "bytes written: " << written << std::endl;
+	    if (written < 0) {
+	        std::cerr << "ERROR: could not write to output device!\n";
+	        close(vid_out);
+	        break;
+	    }
+        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Display Image", output);
     }
 
     auto key = cv::waitKey(1);
-    if (key == 32) break;
+    if (key == 32) { break; }
+    else if (key == 49) { output_mode = OUTPUT_MODE_BOKEH; }
+    else if (key == 50) { output_mode = OUTPUT_MODE_CX; }
+    else if (key == 51) { output_mode = OUTPUT_MODE_DEPTH; }
+    else { std::cout << "key press: " << key << std::endl; }
   }
 }
 
