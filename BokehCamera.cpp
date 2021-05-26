@@ -68,7 +68,7 @@ BokehCamera::BokehCamera() {
     cfg.enable_stream(RS2_STREAM_COLOR, 1280, 720, RS2_FORMAT_RGB8, 30);
     rs2_pipe.start(cfg);
     flength = 600.0f;
-    dof = 300.0f;
+    dof = 150.0f;
     output_device = "/dev/video20";
     output_mode = OUTPUT_MODE_BOKEH;
 
@@ -162,8 +162,8 @@ void BokehCamera::start() {
     // compute blurred images for a small kernel and large kernel on scaled-down versions to reduce CPU usage
     // they will be scaled back up and interpolated to simulate other blur kernels in-between
     cv::resize(img_color, img_color_small, cv::Size(640, 360), 0, 0, cv::INTER_NEAREST);
-    cv::blur(img_color_small, img_color_small_blur_2, cv::Size(10, 10));
     cv::blur(img_color_small, img_color_small_blur_1, cv::Size(5, 5));
+    cv::blur(img_color_small_blur_1, img_color_small_blur_2, cv::Size(10, 10));
 
     // scale back up after blurring
     cv::resize(img_color_small_blur_1, img_color_blur_1, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
