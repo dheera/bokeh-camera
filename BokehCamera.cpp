@@ -174,7 +174,7 @@ void BokehCamera::start() {
     cv::Mat1f b = cv::abs(img_depth - flength);
     b /= dof;
 
-    cv::Mat1f cx = 1.0f / (1.0f + b.mul(b));
+    cv::Mat1f cx = 1.0f / (1.0f + b);
     cx = cv::max(cv::min(cx, 1.0f), 0.0f);
 
     cv::blur(cx, cx, cv::Size(10, 10));
@@ -283,6 +283,8 @@ void BokehCamera::start() {
     else if (key == 49) { output_mode = OUTPUT_MODE_BOKEH; }
     else if (key == 50) { output_mode = OUTPUT_MODE_CX; }
     else if (key == 51) { output_mode = OUTPUT_MODE_DEPTH; }
+    else if (key == 91) { flength += 40; std::cout << "flength = " << flength << std::endl; }
+    else if (key == 93) { flength -= 40; std::cout << "flength = " << flength << std::endl; }
     else { std::cout << "key press: " << key << std::endl; }
   }
 }
