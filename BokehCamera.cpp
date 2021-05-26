@@ -102,15 +102,34 @@ BokehCamera::~BokehCamera() {
 }
 
 void BokehCamera::start() {
+
+
+    using std::chrono::high_resolution_clock;
+    using std::chrono::duration_cast;
+    using std::chrono::duration;
+    using std::chrono::milliseconds;
+
+
+
   rs2::align align_to_color(RS2_STREAM_COLOR);
+  rs2::hole_filling_filter hole_filter;
+  hole_filter.set_option(RS2_OPTION_HOLES_FILL,1);
+
+    cv::Mat img_color_small;
+    cv::Mat img_color_small_blur_1;
+    cv::Mat img_color_small_blur_2;
+    cv::Mat img_color_blur_1;
+    cv::Mat img_color_blur_2;
 
   for(;;) {
     // fetch synchronized depth and color frames from RealSense
     rs2::frameset data = rs2_pipe.wait_for_frames();
+    data = align_to_color.process(data);
+
     rs2::depth_frame depth = data.get_depth_frame();
     rs2::video_frame color = data.get_color_frame();
 
-    data = align_to_color.process(data);
+    depth = hole_filter.process(depth);
 
     std::cout << "received depth frame: " << depth.get_width() << "x" << depth.get_height() << std::endl;
     std::cout << "received color frame: " << color.get_width() << "x" << color.get_height() << std::endl;
@@ -126,20 +145,16 @@ void BokehCamera::start() {
 
     // compute blurred images for a small kernel and large kernel on scaled-down versions to reduce CPU usage
     // they will be scaled back up and interpolated to simulate other blur kernels in-between
-    cv::Mat img_color_small;
-    cv::Mat img_color_small_blur_1;
-    cv::Mat img_color_small_blur_2;
     cv::resize(img_color, img_color_small, cv::Size(640, 360), 0, 0, cv::INTER_NEAREST);
     cv::blur(img_color_small, img_color_small_blur_2, cv::Size(10, 10));
     cv::blur(img_color_small, img_color_small_blur_1, cv::Size(5, 5));
 
     // scale back up after blurring
-    cv::Mat img_color_blur_1;
-    cv::Mat img_color_blur_2;
     cv::resize(img_color_small_blur_1, img_color_blur_1, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
     cv::resize(img_color_small_blur_2, img_color_blur_2, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
 
     // compute amount of blur at each pixel
+    // TODO 5ms !!
     cv::Mat1f b = (img_depth - flength);
     b /= dof;
     cv::Mat1f cx = 1.0f / (1.0f + b.mul(b));
@@ -147,29 +162,46 @@ void BokehCamera::start() {
 
     CV_Assert(cx.depth() == CV_32F);
 
+    auto t1 = high_resolution_clock::now();
+
     // compute coefficients and interpolate
-    //
+    // TODO 24ms
     cv::Mat output(cx.rows, cx.cols, CV_8UC3);
 
-    cv::MatIterator_<float> it, end;
-    cv::MatIterator_<cv::Vec3b> iti0 = img_color.begin<cv::Vec3b>();
-    cv::MatIterator_<cv::Vec3b> iti1 = img_color_blur_1.begin<cv::Vec3b>();
-    cv::MatIterator_<cv::Vec3b> iti2 = img_color_blur_2.begin<cv::Vec3b>();
-    cv::MatIterator_<cv::Vec3b> ito = output.begin<cv::Vec3b>();
-
     float q0, q1, q2;
+    float* it;
+    cv::Vec3b* iti0;
+    cv::Vec3b* iti1;
+    cv::Vec3b* iti2;
+    cv::Vec3b* ito;
 
-    for(it = cx.begin(), end = cx.end(); it != end; ++it) {
-	q0 = (*it > 0.5f) * (*it - 0.5f) * 2.0f;
-	q1 = (*it > 0.5f) * (1.0f - q0) + (*it <= 0.5f) * (*it * 2.0f);
-	q2 = (*it < 0.5f) * (1.0f - q1);
+    // for(it = cx.begin(), end = cx.end(); it != end; ++it) {
+    for(int r = 0; r < cx.rows; r++) {
+	it = cx.ptr<float>(r);
+	iti0 = img_color.ptr<cv::Vec3b>(r);
+	iti1 = img_color_blur_1.ptr<cv::Vec3b>(r);
+	iti2 = img_color_blur_2.ptr<cv::Vec3b>(r);
+	ito = output.ptr<cv::Vec3b>(r);
 
-	(*ito)[0] = q0 * (*iti0)[0] + q1 * (*iti1)[0] + q2 * (*iti2)[0];
-	(*ito)[1] = q0 * (*iti0)[1] + q1 * (*iti1)[1] + q2 * (*iti2)[1];
-	(*ito)[2] = q0 * (*iti0)[2] + q1 * (*iti1)[2] + q2 * (*iti2)[2];
-	++ito;++iti0;++iti1;++iti2;
+        for(int c = 0; c < cx.cols; c++) {
+
+	q0 = (it[c] > 0.5f) ? (it[c] - 0.5f) * 2.0f : 0.0f;
+	q1 = ((it[c] > 0.5f) ? (1.0f - q0) : 0.0f ) + ((it[c] <= 0.5f) ? (it[c] * 2.0f) : 0.0f);
+	q2 = (it[c] < 0.5f) ? (1.0f - q1) : 0.0f;
+
+	ito[c][0] = q0 * iti0[c][0] + q1 * iti1[c][0] + q2 * iti2[c][0];
+	ito[c][1] = q0 * iti0[c][1] + q1 * iti1[c][1] + q2 * iti2[c][1];
+	ito[c][2] = q0 * iti0[c][2] + q1 * iti1[c][2] + q2 * iti2[c][2];
+
+	}
     }
    
+    auto t2 = high_resolution_clock::now();
+    auto ms_int = duration_cast<milliseconds>(t2 - t1);
+    /* Getting number of milliseconds as a double. */
+    duration<double, std::milli> ms_double = t2 - t1;
+    std::cout << ms_int.count() << "ms\n";
+    std::cout << ms_double.count() << "ms";
 
     cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
     cv::imshow("Display Image", output);
