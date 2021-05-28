@@ -10,6 +10,7 @@
 #define OUTPUT_MODE_CX 1
 #define OUTPUT_MODE_DEPTH 2
 #define OUTPUT_MODE_RGB 3
+#define DEBUG 0
 
 std::string type2str(int type) {
   std::string r;
@@ -38,18 +39,18 @@ class BokehCamera {
     public:
         BokehCamera();
         ~BokehCamera();
-	void start();
+    void start();
     private:
         rs2::pipeline rs2_pipe;
         float flength; // focal length
-	float dof;     // depth of focus
+    float dof;     // depth of focus
         std::string output_device;
-	std::vector<cv::Mat> img_out_buffer;
-	int vid_out;
-	size_t framesize;
-	uint8_t output_mode;
-	size_t vid_width;
-	size_t vid_height;
+    std::vector<cv::Mat> img_out_buffer;
+    int vid_out;
+    size_t framesize;
+    uint8_t output_mode;
+    size_t vid_width;
+    size_t vid_height;
 };
 
 BokehCamera::BokehCamera() {
@@ -68,7 +69,7 @@ BokehCamera::BokehCamera() {
     if(vid_out < 0) {
         std::cerr << "ERROR: could not open output device!\n" <<
         strerror(errno);
-	//return -2;
+	exit(1);
     }
 
     struct v4l2_format vid_format;
@@ -77,7 +78,7 @@ BokehCamera::BokehCamera() {
 
     if (ioctl(vid_out, VIDIOC_G_FMT, &vid_format) < 0) {
         std::cerr << "ERROR: unable to get video format!\n" <<
-        strerror(errno); // return -1;
+        strerror(errno);
     }   
 
     // configure desired video format on device
@@ -91,7 +92,7 @@ BokehCamera::BokehCamera() {
     if (ioctl(vid_out, VIDIOC_S_FMT, &vid_format) < 0) {
         std::cerr << "ERROR: unable to set video format!\n" <<
         strerror(errno);
-       	//return -1;
+	exit(2);
     }
 }
 
@@ -100,33 +101,22 @@ BokehCamera::~BokehCamera() {
 }
 
 void BokehCamera::start() {
-
-
-    using std::chrono::high_resolution_clock;
-    using std::chrono::duration_cast;
-    using std::chrono::duration;
-    using std::chrono::milliseconds;
-
-
-
   rs2::align align_to_color(RS2_STREAM_COLOR);
-  rs2::hole_filling_filter hole_filter;
   rs2::spatial_filter spatial_filter;
   rs2::temporal_filter temporal_filter;
-
   rs2::disparity_transform depth_to_disparity(true);
   rs2::disparity_transform disparity_to_depth(false);
-
+  rs2::hole_filling_filter hole_filter;
   hole_filter.set_option(RS2_OPTION_HOLES_FILL,1);
-
   rs2::frameset data;
-    cv::Mat img_color_small;
-    cv::Mat img_color_small_blur_1;
-    cv::Mat img_color_small_blur_2;
-    cv::Mat img_color_blur_1;
-    cv::Mat img_color_blur_2;
-    cv::Mat1f cx;
-    cv::Mat1f b;
+
+  cv::Mat img_color_small;
+  cv::Mat img_color_small_blur_1;
+  cv::Mat img_color_small_blur_2;
+  cv::Mat img_color_blur_1;
+  cv::Mat img_color_blur_2;
+  cv::Mat1f cx;
+  cv::Mat1f b;
 
   for(;;) {
     // fetch synchronized depth and color frames from RealSense
@@ -142,8 +132,10 @@ void BokehCamera::start() {
     //depth = disparity_to_depth.process(depth);
     depth = hole_filter.process(depth);
 
-    //std::cout << "received depth frame: " << depth.get_width() << "x" << depth.get_height() << std::endl;
-    //std::cout << "received color frame: " << color.get_width() << "x" << color.get_height() << std::endl;
+    if(DEBUG) {
+        std::cout << "received depth frame: " << depth.get_width() << "x" << depth.get_height() << std::endl;
+        std::cout << "received color frame: " << color.get_width() << "x" << color.get_height() << std::endl;
+    }
 
     int depth_w = depth.get_width();
     int depth_h = depth.get_height();
@@ -153,6 +145,15 @@ void BokehCamera::start() {
     // convert to OpenCV matrices
     cv::Mat img_depth(cv::Size(depth_w, depth_h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
     cv::Mat img_color(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
+
+    if(DEBUG) {
+        // checking to make sure the cv::Mat didn't do a memory copy from the rs2::frame, it shouldn't
+        std::cout << "POINTERS" << std::endl;
+        std::cout << "rs2 depth ptr = " << (uint64_t)(void*)depth.get_data() << std::endl;
+        std::cout << "rs2 color ptr = " << (uint64_t)(void*)color.get_data() << std::endl;
+        std::cout << "cv depth ptr = " << (uint64_t)(void*)img_depth.ptr<uchar>(0) << std::endl;
+        std::cout << "cv color ptr = " << (uint64_t)(void*)img_color.ptr<uchar>(0) << std::endl;
+    }
 
     // compute blurred images for a small kernel and large kernel on scaled-down versions to reduce CPU usage
     // they will be scaled back up and interpolated to simulate other blur kernels in-between
@@ -175,8 +176,6 @@ void BokehCamera::start() {
     cv::blur(cx, cx, cv::Size(10, 10));
 
     CV_Assert(cx.depth() == CV_32F);
-
-    auto t1 = high_resolution_clock::now();
 
     // compute coefficients and interpolate
     // TODO 24ms
@@ -203,90 +202,83 @@ void BokehCamera::start() {
     int idx = 0, idx3 = 0;
 
     for(idx = 0; idx < cx.rows*cx.cols; idx++) {
-	idx3 = idx*3;
-	if(it[idx] > 0.5f) {
-  	  q0 = (it[idx] - 0.5f) * 2.0f;
-	  q1 = (1.0f - q0);
-	  ito[idx3+0] = q0 * iti0[idx3+0] + q1 * iti1[idx3+0];
-  	  ito[idx3+1] = q0 * iti0[idx3+1] + q1 * iti1[idx3+1];
-	  ito[idx3+2] = q0 * iti0[idx3+2] + q1 * iti1[idx3+2];
-	} else {
-	  q1 = (it[idx] * 2.0f);
- 	  q2 = (1.0f - q1);
-	  ito[idx3+0] = q1 * iti1[idx3+0] + q2 * iti2[idx3+0];
-  	  ito[idx3+1] = q1 * iti1[idx3+1] + q2 * iti2[idx3+1];
-	  ito[idx3+2] = q1 * iti1[idx3+2] + q2 * iti2[idx3+2];
-	}
+    idx3 = idx*3;
+    if(it[idx] > 0.5f) {
+        q0 = (it[idx] - 0.5f) * 2.0f;
+      q1 = (1.0f - q0);
+      ito[idx3+0] = q0 * iti0[idx3+0] + q1 * iti1[idx3+0];
+        ito[idx3+1] = q0 * iti0[idx3+1] + q1 * iti1[idx3+1];
+      ito[idx3+2] = q0 * iti0[idx3+2] + q1 * iti1[idx3+2];
+    } else {
+      q1 = (it[idx] * 2.0f);
+       q2 = (1.0f - q1);
+      ito[idx3+0] = q1 * iti1[idx3+0] + q2 * iti2[idx3+0];
+        ito[idx3+1] = q1 * iti1[idx3+1] + q2 * iti2[idx3+1];
+      ito[idx3+2] = q1 * iti1[idx3+2] + q2 * iti2[idx3+2];
+    }
     }
    
-    auto t2 = high_resolution_clock::now();
-    auto ms_int = duration_cast<milliseconds>(t2 - t1);
-    /* Getting number of milliseconds as a double. */
-    duration<double, std::milli> ms_double = t2 - t1;
-    std::cout << ms_double.count() << "ms" << std::endl;
-
-
     if(output_mode == OUTPUT_MODE_BOKEH) {
-	    std::cout << "BOKEH" << std::endl;
-	    size_t written = write(vid_out, output.data, framesize);
-	    std::cout << "bytes written: " << written << std::endl;
-	    if (written < 0) {
-	        std::cerr << "ERROR: could not write to output device!\n";
-	        close(vid_out);
-	        break;
-	    }
+        if(DEBUG) std::cout << "BOKEH" << std::endl;
+        int written = write(vid_out, output.data, framesize);
+        if(DEBUG) std::cout << "bytes written: " << written << std::endl;
+        if (written < 0) {
+            std::cerr << "ERROR: could not write to output device!\n";
+            close(vid_out);
+            break;
+        }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", output);
     } else if(output_mode == OUTPUT_MODE_CX) {
-        std::cout << "CX" << std::endl;
-	cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
+        if(DEBUG) std::cout << "CX" << std::endl;
+        cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
         for(int r = 0; r < cx.rows; r++) {
-	  float* it = cx.ptr<float>(r);
-	  cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
-          for(int c = 0; c < cx.cols; c++) {
-            ito[c][0] = it[c]*255;
-            ito[c][1] = it[c]*255;
-            ito[c][2] = it[c]*255;
-	  }
-	}
-	    size_t written = write(vid_out, output.data, framesize);
-	    std::cout << "bytes written: " << written << std::endl;
-	    if (written < 0) {
-	        std::cerr << "ERROR: could not write to output device!\n";
-	        close(vid_out);
-	        break;
-	    }
+            float* it = cx.ptr<float>(r);
+            cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
+            for(int c = 0; c < cx.cols; c++) {
+                ito[c][0] = it[c]*255;
+                ito[c][1] = it[c]*255;
+                ito[c][2] = it[c]*255;
+            }
+        }
+        int written = write(vid_out, output.data, framesize);
+        if(DEBUG) std::cout << "bytes written: " << written << std::endl;
+        if (written < 0) {
+            std::cerr << "ERROR: could not write to output device!\n";
+            close(vid_out);
+            break;
+        }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", output);
     } else if(output_mode == OUTPUT_MODE_DEPTH) {
-        std::cout << "DEPTH" << std::endl;
-	cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
+        if(DEBUG) std::cout << "DEPTH" << std::endl;
+        cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
         for(int r = 0; r < img_depth.rows; r++) {
-	  uint16_t* it = img_depth.ptr<uint16_t>(r);
-	  cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
-          for(int c = 0; c < img_depth.cols; c++) {
-            ito[c][0] = it[c] >> 4;
-            ito[c][1] = it[c] >> 4;
-            ito[c][2] = it[c] >> 4;
-	  }
-	}
-	    size_t written = write(vid_out, output.data, framesize);
-	    std::cout << "bytes written: " << written << std::endl;
-	    if (written < 0) {
-	        std::cerr << "ERROR: could not write to output device!\n";
-	        close(vid_out);
-	        break;
-	    }
+            uint16_t* it = img_depth.ptr<uint16_t>(r);
+            cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
+            for(int c = 0; c < img_depth.cols; c++) {
+                ito[c][0] = it[c] >> 4;
+                ito[c][1] = it[c] >> 4;
+                ito[c][2] = it[c] >> 4;
+            }
+        }
+        int written = write(vid_out, output.data, framesize);
+        if(DEBUG) std::cout << "bytes written: " << written << std::endl;
+        if (written < 0) {
+            std::cerr << "ERROR: could not write to output device!\n";
+            close(vid_out);
+            break;
+        }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", output);
     } else if(output_mode == OUTPUT_MODE_RGB) {
-	    size_t written = write(vid_out, img_color.data, framesize);
-	    std::cout << "bytes written: " << written << std::endl;
-	    if (written < 0) {
-	        std::cerr << "ERROR: could not write to output device!\n";
-	        close(vid_out);
-	        break;
-	    }
+        int written = write(vid_out, img_color.data, framesize);
+        if(DEBUG) std::cout << "bytes written: " << written << std::endl;
+        if (written < 0) {
+            std::cerr << "ERROR: could not write to output device!\n";
+            close(vid_out);
+            break;
+        }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", img_color);
     }
@@ -297,9 +289,9 @@ void BokehCamera::start() {
     else if (key == 50) { output_mode = OUTPUT_MODE_CX; }
     else if (key == 51) { output_mode = OUTPUT_MODE_DEPTH; }
     else if (key == 52) { output_mode = OUTPUT_MODE_RGB; }
-    else if (key == 91) { flength += 40; std::cout << "flength = " << flength << std::endl; }
-    else if (key == 93) { flength -= 40; std::cout << "flength = " << flength << std::endl; }
-    else { std::cout << "key press: " << key << std::endl; }
+    else if (key == 91) { flength += 40; if(DEBUG) std::cout << "flength = " << flength << std::endl; }
+    else if (key == 93) { flength -= 40; if(DEBUG) std::cout << "flength = " << flength << std::endl; }
+    else if (key != -1) { std::cout << "key press: " << key << std::endl; }
   }
 }
 
