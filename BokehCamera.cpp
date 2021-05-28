@@ -39,18 +39,18 @@ class BokehCamera {
     public:
         BokehCamera();
         ~BokehCamera();
-    void start();
+        void start();
     private:
         rs2::pipeline rs2_pipe;
         float flength; // focal length
-    float dof;     // depth of focus
+        float dof;     // depth of focus
         std::string output_device;
-    std::vector<cv::Mat> img_out_buffer;
-    int vid_out;
-    size_t framesize;
-    uint8_t output_mode;
-    size_t vid_width;
-    size_t vid_height;
+        std::vector<cv::Mat> img_out_buffer;
+        int vid_out;
+        size_t framesize;
+        uint8_t output_mode;
+        size_t vid_width;
+        size_t vid_height;
 };
 
 BokehCamera::BokehCamera() {
@@ -69,7 +69,7 @@ BokehCamera::BokehCamera() {
     if(vid_out < 0) {
         std::cerr << "ERROR: could not open output device!\n" <<
         strerror(errno);
-	exit(1);
+        exit(1);
     }
 
     struct v4l2_format vid_format;
@@ -79,6 +79,7 @@ BokehCamera::BokehCamera() {
     if (ioctl(vid_out, VIDIOC_G_FMT, &vid_format) < 0) {
         std::cerr << "ERROR: unable to get video format!\n" <<
         strerror(errno);
+        exit(2);
     }   
 
     // configure desired video format on device
@@ -92,7 +93,7 @@ BokehCamera::BokehCamera() {
     if (ioctl(vid_out, VIDIOC_S_FMT, &vid_format) < 0) {
         std::cerr << "ERROR: unable to set video format!\n" <<
         strerror(errno);
-	exit(2);
+        exit(3);
     }
 }
 
@@ -110,13 +111,29 @@ void BokehCamera::start() {
   hole_filter.set_option(RS2_OPTION_HOLES_FILL,1);
   rs2::frameset data;
 
+  // downscaled version of image for faster blur operation, it's blurry anyway
   cv::Mat img_color_small;
+
+  // slightly blurred version of img_color_small
   cv::Mat img_color_small_blur_1;
+
+  // massively blurred version of img_color_small
   cv::Mat img_color_small_blur_2;
+
+  // upscaled version of img_color_small_blur_1
   cv::Mat img_color_blur_1;
+
+  // upscaled version of img_color_small_blur_2
   cv::Mat img_color_blur_2;
-  cv::Mat1f cx;
-  cv::Mat1f b;
+
+  // the amount that each pixel wants to be blurred (1.0=no blur, 0.0=full blur)
+  // because blurring is expensive, we interpolate between
+  // img_color (blur_amount = 0.0), img_color_blur_1 (blur_amount = 0.5), and img_color_blur_2 (blur_amount = 1.0)
+  // to fake other values of blur_amount
+  cv::Mat1f blur_amount;
+
+  // intermediate value needed to process blur_amount
+  cv::Mat1f defocus_amount;
 
   for(;;) {
     // fetch synchronized depth and color frames from RealSense
@@ -126,10 +143,10 @@ void BokehCamera::start() {
     rs2::depth_frame depth = data.get_depth_frame();
     rs2::video_frame color = data.get_color_frame();
 
-    //depth = depth_to_disparity.process(depth);
+    // depth = depth_to_disparity.process(depth); // not much impact on images by omitting this
     depth = spatial_filter.process(depth);
     depth = temporal_filter.process(depth);
-    //depth = disparity_to_depth.process(depth);
+    // depth = disparity_to_depth.process(depth); // not much impact on images by omitting this
     depth = hole_filter.process(depth);
 
     if(DEBUG) {
@@ -166,20 +183,18 @@ void BokehCamera::start() {
     cv::resize(img_color_small_blur_2, img_color_blur_2, cv::Size(color_w, color_h), 0, 0, cv::INTER_NEAREST);
 
     // compute amount of blur at each pixel
-    // TODO 5ms !!
-    b = cv::abs(img_depth - flength);
-    b /= dof;
+    defocus_amount = cv::abs(img_depth - flength);
+    defocus_amount /= dof;
 
-    cx = 1.0f / (1.0f + b.mul(b));
-    cx = cv::max(cv::min(cx, 1.0f), 0.0f);
+    blur_amount = 1.0f / (1.0f + defocus_amount.mul(defocus_amount));
+    blur_amount = cv::max(cv::min(blur_amount, 1.0f), 0.0f);
 
-    cv::blur(cx, cx, cv::Size(10, 10));
+    cv::blur(blur_amount, blur_amount, cv::Size(10, 10));
 
-    CV_Assert(cx.depth() == CV_32F);
+    CV_Assert(blur_amount.depth() == CV_32F);
 
     // compute coefficients and interpolate
-    // TODO 24ms
-    cv::Mat output(cx.rows, cx.cols, CV_8UC3);
+    cv::Mat output(blur_amount.rows, blur_amount.cols, CV_8UC3);
 
     float q0, q1, q2;
     float* it;
@@ -188,34 +203,36 @@ void BokehCamera::start() {
     uchar* iti2;
     uchar* ito;
 
-    assert(cx.isContinuous());
+    assert(blur_amount.isContinuous());
     assert(output.isContinuous());
     assert(img_color.isContinuous());
     assert(img_color_blur_1.isContinuous());
     assert(img_color_blur_2.isContinuous());
 
-    it = cx.ptr<float>(0);
+    it = blur_amount.ptr<float>(0);
     iti0 = img_color.ptr<uchar>(0);
     iti1 = img_color_blur_1.ptr<uchar>(0);
     iti2 = img_color_blur_2.ptr<uchar>(0);
     ito = output.ptr<uchar>(0);
-    int idx = 0, idx3 = 0;
 
-    for(idx = 0; idx < cx.rows*cx.cols; idx++) {
-    idx3 = idx*3;
-    if(it[idx] > 0.5f) {
-        q0 = (it[idx] - 0.5f) * 2.0f;
-      q1 = (1.0f - q0);
-      ito[idx3+0] = q0 * iti0[idx3+0] + q1 * iti1[idx3+0];
-        ito[idx3+1] = q0 * iti0[idx3+1] + q1 * iti1[idx3+1];
-      ito[idx3+2] = q0 * iti0[idx3+2] + q1 * iti1[idx3+2];
-    } else {
-      q1 = (it[idx] * 2.0f);
-       q2 = (1.0f - q1);
-      ito[idx3+0] = q1 * iti1[idx3+0] + q2 * iti2[idx3+0];
-        ito[idx3+1] = q1 * iti1[idx3+1] + q2 * iti2[idx3+1];
-      ito[idx3+2] = q1 * iti1[idx3+2] + q2 * iti2[idx3+2];
-    }
+    for(int idx = 0; idx < blur_amount.rows*blur_amount.cols; idx++) {
+        int idx3 = idx*3; // cache this value for minor speedup
+
+        if(it[idx] > 0.5f) {
+            // blur radius is low, interpolate between img_color and img_color_blur_1
+            q0 = (it[idx] - 0.5f) * 2.0f;
+            q1 = (1.0f - q0);
+            ito[idx3+0] = q0 * iti0[idx3+0] + q1 * iti1[idx3+0];
+            ito[idx3+1] = q0 * iti0[idx3+1] + q1 * iti1[idx3+1];
+            ito[idx3+2] = q0 * iti0[idx3+2] + q1 * iti1[idx3+2];
+        } else {
+            // blur radius is high, interpolate between img_color_blur_1 and img_color_blur_2
+            q1 = (it[idx] * 2.0f);
+            q2 = (1.0f - q1);
+            ito[idx3+0] = q1 * iti1[idx3+0] + q2 * iti2[idx3+0];
+            ito[idx3+1] = q1 * iti1[idx3+1] + q2 * iti2[idx3+1];
+            ito[idx3+2] = q1 * iti1[idx3+2] + q2 * iti2[idx3+2];
+        }
     }
    
     if(output_mode == OUTPUT_MODE_BOKEH) {
@@ -232,10 +249,10 @@ void BokehCamera::start() {
     } else if(output_mode == OUTPUT_MODE_CX) {
         if(DEBUG) std::cout << "CX" << std::endl;
         cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
-        for(int r = 0; r < cx.rows; r++) {
-            float* it = cx.ptr<float>(r);
+        for(int r = 0; r < blur_amount.rows; r++) {
+            float* it = blur_amount.ptr<float>(r);
             cv::Vec3b* ito = output.ptr<cv::Vec3b>(r);
-            for(int c = 0; c < cx.cols; c++) {
+            for(int c = 0; c < blur_amount.cols; c++) {
                 ito[c][0] = it[c]*255;
                 ito[c][1] = it[c]*255;
                 ito[c][2] = it[c]*255;
