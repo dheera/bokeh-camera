@@ -242,8 +242,10 @@ void BokehCamera::start() {
         for(int jdx = 0; jdx < img_ir1.cols; jdx++) {
           uint8_t* p = img_ir1.ptr<uint8_t>(idx);
            if(p[jdx] == 255) {
-             img_whiteboard.at<cv::Vec3b>(cv::Point(jdx, idx))[1] = 191;
-             img_whiteboard.at<cv::Vec3b>(cv::Point(jdx, idx))[2] = 255;
+             float x = ((float)jdx - ir1_w/2) * 0.9 + ir1_w/2 + ir1_w / 20;
+	     float y = (float)idx;
+             img_whiteboard.at<cv::Vec3b>(cv::Point(int(x), int(y)))[1] = 191;
+             img_whiteboard.at<cv::Vec3b>(cv::Point(int(x), int(y)))[2] = 255;
      	  }
         }
       }
