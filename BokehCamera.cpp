@@ -8,8 +8,10 @@
 
 #define OUTPUT_MODE_BOKEH 0
 #define OUTPUT_MODE_CX 1
-#define OUTPUT_MODE_DEPTH 2
-#define OUTPUT_MODE_RGB 3
+#define OUTPUT_MODE_WHITEBOARD 2
+#define OUTPUT_MODE_DEPTH 3
+#define OUTPUT_MODE_RGB 4
+#define OUTPUT_MODE_IR 5
 #define DEBUG 0
 
 std::string type2str(int type) {
@@ -49,21 +51,31 @@ class BokehCamera {
         int vid_out;
         size_t framesize;
         uint8_t output_mode;
+	bool whiteboard_enabled;
         size_t vid_width;
         size_t vid_height;
+        rs2::config cfg;
+	rs2::pipeline_profile selection;
+	rs2::device selected_device;
 };
 
 BokehCamera::BokehCamera() {
     vid_width = 1280;
     vid_height = 720;
-    rs2::config cfg;
     cfg.enable_stream(RS2_STREAM_DEPTH, vid_width, vid_height, RS2_FORMAT_Z16, 30);
     cfg.enable_stream(RS2_STREAM_COLOR, vid_width, vid_height, RS2_FORMAT_RGB8, 30);
-    rs2_pipe.start(cfg);
+    cfg.enable_stream(RS2_STREAM_INFRARED, 1, vid_width, vid_height, RS2_FORMAT_Y8, 30);
+    rs2::pipeline_profile selection = rs2_pipe.start(cfg);
     flength = 600.0f;
     dof = 300.0f;
     output_device = "/dev/video20";
     output_mode = OUTPUT_MODE_BOKEH;
+    whiteboard_enabled = false;
+
+    selected_device = selection.get_device();
+
+    auto depth_sensor = selected_device.first<rs2::depth_sensor>();
+    depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f);
 
     vid_out = open(output_device.c_str(), O_RDWR);
     if(vid_out < 0) {
@@ -135,6 +147,8 @@ void BokehCamera::start() {
   // intermediate value needed to process blur_amount
   cv::Mat1f defocus_amount;
 
+  cv::Mat img_whiteboard(cv::Size(vid_width, vid_height), CV_8UC3);
+
   for(;;) {
     // fetch synchronized depth and color frames from RealSense
     data = rs2_pipe.wait_for_frames();
@@ -142,6 +156,7 @@ void BokehCamera::start() {
 
     rs2::depth_frame depth = data.get_depth_frame();
     rs2::video_frame color = data.get_color_frame();
+    rs2::video_frame ir1 = data.get_infrared_frame(1);
 
     // depth = depth_to_disparity.process(depth); // not much impact on images by omitting this
     depth = spatial_filter.process(depth);
@@ -158,10 +173,13 @@ void BokehCamera::start() {
     int depth_h = depth.get_height();
     int color_w = color.get_width();
     int color_h = color.get_height();
+    int ir1_w = ir1.get_width();
+    int ir1_h = ir1.get_height();
 
     // convert to OpenCV matrices
     cv::Mat img_depth(cv::Size(depth_w, depth_h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
     cv::Mat img_color(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
+    cv::Mat img_ir1(cv::Size(ir1_w, ir1_h), CV_8UC1, (void*)ir1.get_data(), cv::Mat::AUTO_STEP);
 
     if(DEBUG) {
         // checking to make sure the cv::Mat didn't do a memory copy from the rs2::frame, it shouldn't
@@ -215,6 +233,17 @@ void BokehCamera::start() {
     iti2 = img_color_blur_2.ptr<uchar>(0);
     ito = output.ptr<uchar>(0);
 
+    if(whiteboard_enabled) {
+      for(int idx = 0; idx < img_ir1.rows; idx++) {
+        for(int jdx = 0; jdx < img_ir1.cols; jdx++) {
+          uint8_t* p = img_ir1.ptr<uint8_t>(idx);
+           if(p[jdx] == 255) {
+             img_whiteboard.at<cv::Vec3b>(cv::Point(jdx, idx))[2] = 255;
+     	  }
+        }
+      }
+    }
+
     for(int idx = 0; idx < blur_amount.rows*blur_amount.cols; idx++) {
         int idx3 = idx*3; // cache this value for minor speedup
 
@@ -233,6 +262,10 @@ void BokehCamera::start() {
             ito[idx3+1] = q1 * iti1[idx3+1] + q2 * iti2[idx3+1];
             ito[idx3+2] = q1 * iti1[idx3+2] + q2 * iti2[idx3+2];
         }
+    }
+
+    if(whiteboard_enabled) {
+	output = 0.5 * img_color_blur_1 + 0.5 * img_whiteboard;
     }
    
     if(output_mode == OUTPUT_MODE_BOKEH) {
@@ -267,6 +300,17 @@ void BokehCamera::start() {
         }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", output);
+    } else if(output_mode == OUTPUT_MODE_WHITEBOARD) {
+        if(DEBUG) std::cout << "WHTIEBOARD" << std::endl;
+        int written = write(vid_out, output.data, framesize); // TODO FIX THIS
+        if(DEBUG) std::cout << "bytes written: " << written << std::endl;
+        if (written < 0) {
+            std::cerr << "ERROR: could not write to output device!\n";
+            close(vid_out);
+            break;
+        }
+        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Display Image", img_whiteboard);
     } else if(output_mode == OUTPUT_MODE_DEPTH) {
         if(DEBUG) std::cout << "DEPTH" << std::endl;
         cv::Mat output(img_depth.rows, img_depth.cols, CV_8UC3);
@@ -298,16 +342,38 @@ void BokehCamera::start() {
         }
         cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", img_color);
+    } else if(output_mode == OUTPUT_MODE_IR) {
+        int written = write(vid_out, img_color.data, framesize); // TODO FIX THIS
+        if(DEBUG) std::cout << "bytes written: " << written << std::endl;
+        if (written < 0) {
+            std::cerr << "ERROR: could not write to output device!\n";
+            close(vid_out);
+            break;
+        }
+        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Display Image", img_ir1);
     }
 
     auto key = cv::waitKey(1);
     if (key == 32) { break; }
     else if (key == 49) { output_mode = OUTPUT_MODE_BOKEH; }
     else if (key == 50) { output_mode = OUTPUT_MODE_CX; }
-    else if (key == 51) { output_mode = OUTPUT_MODE_DEPTH; }
-    else if (key == 52) { output_mode = OUTPUT_MODE_RGB; }
+    else if (key == 51) { output_mode = OUTPUT_MODE_WHITEBOARD; }
+    else if (key == 52) { output_mode = OUTPUT_MODE_DEPTH; }
+    else if (key == 53) { output_mode = OUTPUT_MODE_RGB; }
+    else if (key == 54) { output_mode = OUTPUT_MODE_IR; }
     else if (key == 91) { flength += 40; if(DEBUG) std::cout << "flength = " << flength << std::endl; }
     else if (key == 93) { flength -= 40; if(DEBUG) std::cout << "flength = " << flength << std::endl; }
+    else if (key == 96) {
+	whiteboard_enabled = !whiteboard_enabled;
+        auto depth_sensor = selected_device.first<rs2::depth_sensor>();
+        if(whiteboard_enabled) {
+            depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 0.f);
+	    img_whiteboard *= 0.;
+	} else {
+            depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f);
+	}
+    }
     else if (key != -1) { std::cout << "key press: " << key << std::endl; }
   }
 }
