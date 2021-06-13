@@ -181,6 +181,10 @@ void BokehCamera::start() {
     cv::Mat img_color(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
     cv::Mat img_ir1(cv::Size(ir1_w, ir1_h), CV_8UC1, (void*)ir1.get_data(), cv::Mat::AUTO_STEP);
 
+    cv::flip(img_depth, img_depth, 1);
+    cv::flip(img_color, img_color, 1);
+    cv::flip(img_ir1, img_ir1, 1);
+
     if(DEBUG) {
         // checking to make sure the cv::Mat didn't do a memory copy from the rs2::frame, it shouldn't
         std::cout << "POINTERS" << std::endl;
@@ -238,6 +242,7 @@ void BokehCamera::start() {
         for(int jdx = 0; jdx < img_ir1.cols; jdx++) {
           uint8_t* p = img_ir1.ptr<uint8_t>(idx);
            if(p[jdx] == 255) {
+             img_whiteboard.at<cv::Vec3b>(cv::Point(jdx, idx))[1] = 191;
              img_whiteboard.at<cv::Vec3b>(cv::Point(jdx, idx))[2] = 255;
      	  }
         }
@@ -265,7 +270,8 @@ void BokehCamera::start() {
     }
 
     if(whiteboard_enabled) {
-	output = 0.5 * img_color_blur_1 + 0.5 * img_whiteboard;
+	output = cv::max(img_color_blur_2, img_whiteboard);
+	// 0.5 * img_color_blur_1 + 0.5 * img_whiteboard;
     }
    
     if(output_mode == OUTPUT_MODE_BOKEH) {
