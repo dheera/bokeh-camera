@@ -77,6 +77,9 @@ BokehCamera::BokehCamera() {
     auto depth_sensor = selected_device.first<rs2::depth_sensor>();
     depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f);
 
+    auto range = depth_sensor.get_option_range(RS2_OPTION_LASER_POWER);
+    depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max/20);
+
     vid_out = open(output_device.c_str(), O_RDWR);
     if(vid_out < 0) {
         std::cerr << "ERROR: could not open output device!\n" <<
@@ -149,7 +152,11 @@ void BokehCamera::start() {
 
   cv::Mat img_whiteboard(cv::Size(vid_width, vid_height), CV_8UC3);
 
-  for(;;) {
+  int clear_whiteboard_counts = 0;
+  uint64_t seq = 0;
+
+  for(;;++seq) {
+
     // fetch synchronized depth and color frames from RealSense
     data = rs2_pipe.wait_for_frames();
     data = align_to_color.process(data);
@@ -177,13 +184,14 @@ void BokehCamera::start() {
     int ir1_h = ir1.get_height();
 
     // convert to OpenCV matrices
-    cv::Mat img_depth(cv::Size(depth_w, depth_h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
-    cv::Mat img_color(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
-    cv::Mat img_ir1(cv::Size(ir1_w, ir1_h), CV_8UC1, (void*)ir1.get_data(), cv::Mat::AUTO_STEP);
+    cv::Mat img_depth_o(cv::Size(depth_w, depth_h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
+    cv::Mat img_color_o(cv::Size(color_w, color_h), CV_8UC3, (void*)color.get_data(), cv::Mat::AUTO_STEP);
+    cv::Mat img_ir1_o(cv::Size(ir1_w, ir1_h), CV_8UC1, (void*)ir1.get_data(), cv::Mat::AUTO_STEP);
 
-    cv::flip(img_depth, img_depth, 1);
-    cv::flip(img_color, img_color, 1);
-    cv::flip(img_ir1, img_ir1, 1);
+    cv::Mat img_depth, img_color, img_ir1;
+    cv::flip(img_depth_o, img_depth, 1);
+    cv::flip(img_color_o, img_color, 1);
+    cv::flip(img_ir1_o, img_ir1, 1);
 
     if(DEBUG) {
         // checking to make sure the cv::Mat didn't do a memory copy from the rs2::frame, it shouldn't
@@ -377,12 +385,14 @@ void BokehCamera::start() {
         auto depth_sensor = selected_device.first<rs2::depth_sensor>();
         if(whiteboard_enabled) {
             depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 0.f);
-	    img_whiteboard *= 0.;
+	    clear_whiteboard_counts = 10;
 	} else {
             depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f);
 	}
     }
     else if (key != -1) { std::cout << "key press: " << key << std::endl; }
+
+    if(clear_whiteboard_counts > 0) { img_whiteboard *= 0.0; clear_whiteboard_counts--; }
   }
 }
 
