@@ -42,6 +42,8 @@ class BokehCamera {
         BokehCamera();
         ~BokehCamera();
         void start();
+        static void onMouse(int event, int x, int y, int flags, void* that);
+        void onMouse(int event, int x, int y, int flags);
     private:
         rs2::pipeline rs2_pipe;
         float flength; // focal length
@@ -51,10 +53,13 @@ class BokehCamera {
         int vid_out;
         size_t framesize;
         uint8_t output_mode;
-	bool whiteboard_enabled;
+    	bool whiteboard_enabled;
         size_t vid_width;
         size_t vid_height;
         rs2::config cfg;
+        bool isMouseDown;
+        int last_x, last_y;
+        cv::Mat img_whiteboard;
 	rs2::pipeline_profile selection;
 	rs2::device selected_device;
 };
@@ -150,10 +155,13 @@ void BokehCamera::start() {
   // intermediate value needed to process blur_amount
   cv::Mat1f defocus_amount;
 
-  cv::Mat img_whiteboard(cv::Size(vid_width, vid_height), CV_8UC3);
+  img_whiteboard = cv::Mat(cv::Size(vid_width, vid_height), CV_8UC3);
 
   int clear_whiteboard_counts = 0;
   uint64_t seq = 0;
+
+  cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
+  cv::setMouseCallback("Display Image", onMouse, this );
 
   for(;;++seq) {
 
@@ -293,7 +301,6 @@ void BokehCamera::start() {
             close(vid_out);
             break;
         }
-        cv::namedWindow("Display Image", cv::WINDOW_AUTOSIZE);
         cv::imshow("Display Image", output);
     } else if(output_mode == OUTPUT_MODE_CX) {
         if(DEBUG) std::cout << "CX" << std::endl;
@@ -394,6 +401,33 @@ void BokehCamera::start() {
 
     if(clear_whiteboard_counts > 0) { img_whiteboard *= 0.0; clear_whiteboard_counts--; }
   }
+}
+
+void BokehCamera::onMouse(int event, int x, int y, int flags, void* that) {
+    ((BokehCamera*)that)->onMouse(event, x, y, flags);
+}
+        
+void BokehCamera::onMouse(int event, int x, int y, int flags) {
+    if(event == 1) {
+        isMouseDown = true;
+        last_x = x;
+        last_y = y;
+    }
+    if(event == 4) isMouseDown = false;
+    if(event == 0) {
+      if(isMouseDown && whiteboard_enabled) {
+        std::cout << "mouse" << " " << event << " " << x << " " << y << std::endl;
+        cv::line(
+           img_whiteboard,
+           cv::Point(last_x, last_y),
+           cv::Point(x, y),
+           cv::Scalar(0, 191, 255),
+           2,
+           8
+        );
+        last_x = x; last_y = y;
+      }
+    }
 }
 
 int main(void) {
