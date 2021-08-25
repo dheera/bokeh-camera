@@ -52,6 +52,7 @@ class BokehCamera {
     private:
         void loop_android_screencap();
         bool run_screencap_loop;
+        bool android_screencap_filter;
         rs2::pipeline rs2_pipe;
         float flength; // focal length
         float dof;     // depth of focus
@@ -84,6 +85,7 @@ BokehCamera::BokehCamera() {
     output_device = "/dev/video20";
     output_mode = OUTPUT_MODE_BOKEH;
     whiteboard_enabled = false;
+    android_screencap_filter = true;
 
     selected_device = selection.get_device();
 
@@ -91,7 +93,7 @@ BokehCamera::BokehCamera() {
     depth_sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1.f);
 
     auto range = depth_sensor.get_option_range(RS2_OPTION_LASER_POWER);
-    depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max/30);
+    depth_sensor.set_option(RS2_OPTION_LASER_POWER, range.max/20);
 
     vid_out = open(output_device.c_str(), O_RDWR);
     if(vid_out < 0) {
@@ -174,14 +176,37 @@ void BokehCamera::loop_android_screencap() {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
       img_screencap2 = cv::Mat(cv::Size(width, height), CV_8UC3);
-      for(unsigned int y=0;y<height;y++) {
-          for(unsigned int x=0;x<width;x++) {
-             img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[0] = 255 - output[16 + (y*width + x)*4];
-             img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[1] = 255 - output[16 + (y*width + x)*4 + 1];
-             img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[2] = 255 - output[16 + (y*width + x)*4 + 2];
+      if(android_screencap_filter) {
+          for(unsigned int y=0;y<height;y++) {
+              for(unsigned int x=0;x<width;x++) {
+                 img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[0] = 255 - output[16 + (y*width + x)*4];
+                 img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[1] = 255 - output[16 + (y*width + x)*4 + 1];
+                 img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[2] = 255 - output[16 + (y*width + x)*4 + 2];
+              }
+          }
+      } else {
+          for(unsigned int y=0;y<height;y++) {
+              for(unsigned int x=0;x<width;x++) {
+                 img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[0] = output[16 + (y*width + x)*4];
+                 img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[1] = output[16 + (y*width + x)*4 + 1];
+                 img_screencap2.at<cv::Vec3b>(cv::Point(int(x), int(y)))[2] = output[16 + (y*width + x)*4 + 2];
+              }
           }
       }
-      cv::resize(img_screencap2, img_screencap, cv::Size(vid_width, vid_height), 0, 0, cv::INTER_LINEAR);
+
+      cv::Mat img_screencap3;
+      if((float)width / (float)height < (float)vid_width / (float)vid_height) {
+        cv::resize(img_screencap2, img_screencap3, cv::Size(int(vid_height * (float)width / (float)height), vid_height), 0, 0, cv::INTER_LINEAR);
+        int padding = (vid_width - img_screencap3.cols)/2;
+        int padding2 = vid_width - img_screencap3.cols - padding;
+        cv::copyMakeBorder(img_screencap3, img_screencap, 0, 0, padding, padding2, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
+      } else {
+        cv::resize(img_screencap2, img_screencap3, cv::Size(vid_width, int(vid_width * (float)height / (float)width)), 0, 0, cv::INTER_LINEAR);
+        int padding = (vid_height - img_screencap3.rows)/2;
+        int padding2 = vid_height - img_screencap3.rows - padding;
+        cv::copyMakeBorder(img_screencap3, img_screencap, padding, padding2, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
+      }
+      // cv::resize(img_screencap2, img_screencap, cv::Size(vid_width, vid_height), 0, 0, cv::INTER_LINEAR);
       std::cout << "done" << std::endl;
     }
 }
@@ -376,8 +401,11 @@ void BokehCamera::start() {
     }
 
     if(run_screencap_loop && img_screencap.rows > 0 && img_screencap.cols > 0) {
-      std::cout << "SIZE " << img_color_blur_2.rows << " " << img_color_blur_2.cols << " " << img_screencap.rows << " " << img_screencap.cols << std::endl;
-      output = cv::max(img_color_blur_2, img_screencap);
+      if(android_screencap_filter) {
+        output = cv::max(img_color_blur_2, img_screencap);
+      } else {
+        output = img_color_blur_2 * 0.3 + img_screencap * 0.7;
+      }
     }
    
     if(output_mode == OUTPUT_MODE_BOKEH) {
@@ -476,6 +504,7 @@ void BokehCamera::start() {
     else if (key == 52) /* 4 */ { output_mode = OUTPUT_MODE_DEPTH; }
     else if (key == 53) /* 5 */ { output_mode = OUTPUT_MODE_RGB; }
     else if (key == 54) /* 6 */ { output_mode = OUTPUT_MODE_IR; }
+    else if (key == 57) /* 9 */ { android_screencap_filter = !android_screencap_filter; }
     else if (key == 48) /* 0 */ { android_screencap_toggle(); }
     else if (key == 91) /* [ */ { flength += 40; if(DEBUG) std::cout << "flength = " << flength << std::endl; }
     else if (key == 93) /* ] */ { flength -= 40; if(DEBUG) std::cout << "flength = " << flength << std::endl; }
