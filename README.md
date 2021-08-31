@@ -1,6 +1,6 @@
 # bokeh-camera
 
-If you think the Google/Zoom segmentation-based background blur effects look kind of fake, this attempts to simulate a more realistic-looking bokeh using a RealSense D455 camera on a virtual camera device that you can use from any conferencing software.
+If you think the Google/Zoom segmentation-based background blur effects look kind of fake, this attempts to simulate a more realistic-looking bokeh using a RealSense D455 or D435 camera on a virtual camera device that you can use from any conferencing software.
 
 Work in progress, code not yet cleaned up, but roughly:
 
@@ -47,8 +47,8 @@ Press \[ or \] to refocus the image
 
 ![image](/images/screenshot1.jpg "image")
 
-**Will it work on a D435/D415/L515?**
+**Will it work on a D415/L515/T265?**
 
-Not yet but go ahead and hack at it
+Probably not but go ahead and try, hack at it, submit a pull request.
 
 
