@@ -4,19 +4,25 @@ If you think the Google/Zoom segmentation-based background blur effects look kin
 
 Work in progress, code not yet cleaned up, but roughly:
 
--1. Requirements: librealsense2-dev, libopencv-dev
+1. Build requirements:
 
-0. Run ./build-this
+   * librealsense2-dev
+   * libopencv-dev
+   * cmake
+   * g++ (or similar C++ compiler)
 
-1. Set up a v4l2 loopback device at /dev/video20
-```
-sudo modprobe -r v4l2loopback
-sudo modprobe v4l2loopback devices=1 video_nr=20 exclusive_caps=1
-```
+1. Run `./build-this`
 
-2. Run ./BokehCamera
+1. Set up a v4l2 loopback device at `/dev/video20`
 
-3. Select the virtual camera on Google Meet or Zoom or whatever you use
+   ```
+   sudo modprobe -r v4l2loopback
+   sudo modprobe v4l2loopback devices=1 video_nr=20 exclusive_caps=1
+   ```
+
+1. Run `./BokehCamera
+
+1. Select the virtual camera on Google Meet or Zoom or whatever you use
 
 # Controls
 
