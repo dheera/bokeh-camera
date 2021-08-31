@@ -13,10 +13,15 @@ Work in progress, code not yet cleaned up, but roughly:
 
 1. Run `./build-this`
 
+1. Ensure that you have the `v4l2loopback` kernel module
+
+   * Ubuntu: `sudo apt install v4l2loopback-dkms`
+   * Fedora/RHEL: `sudo dnf install v4l2loopback`
+
 1. Set up a v4l2 loopback device at `/dev/video20`
 
    ```
-   sudo modprobe -r v4l2loopback
+   sudo modprobe -r v4l2loopback  # This one can fail if the module isn't loaded, that's okay
    sudo modprobe v4l2loopback devices=1 video_nr=20 exclusive_caps=1
    ```
 
